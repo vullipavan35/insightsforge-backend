@@ -434,28 +434,23 @@ Migrations: Automatic (creates fresh schema)
 Isolation: Each test gets a clean database
 ```
 
-### **Staging (AWS/Azure)**
+### **Staging (Supabase / Cloud)**
 ```
-Database: AWS RDS PostgreSQL 14 (or Azure Database for PostgreSQL)
-Instance Type: db.t3.small (for staging)
-Backup: Daily (7-day retention)
-Multi-AZ: No (staging doesn't need HA)
-Replicas: None
-Connection: SSL/TLS encrypted
+Database: Supabase Managed PostgreSQL 15+
+Connection: Supavisor Transaction Pooler (Port 6543) / Direct (Port 5432)
+Backup: Daily automated backups
+SSL/TLS: Enforced (SSL mode require)
 Migrations: Automated via CI/CD pipeline
-Database Name: insightsforge_staging
 ```
 
-### **Production (AWS/Azure)**
+### **Production (Supabase Managed PostgreSQL)**
 ```
-Database: AWS RDS PostgreSQL 14 (or Azure Database for PostgreSQL)
-Instance Type: db.t3.medium or larger
-Backup: Continuous (35-day retention)
-Multi-AZ: Yes (High Availability)
-Read Replicas: Yes (for analytics)
-Connection: SSL/TLS encrypted + IAM authentication
-Migrations: Blue-green deployment
-Database Name: insightsforge_prod
+Database: Supabase Managed PostgreSQL 15+ (Production)
+Connection: Supavisor Transaction Pooler (Port 6543) with SSL
+Backup: Point-in-time recovery & continuous backups
+SSL/TLS: Enforced
+High Availability: Supabase managed enterprise HA
+Migrations: Zero-downtime backward-compatible migrations via CI/CD
 ```
 
 ### **All Environments: Required Tables**
@@ -554,7 +549,7 @@ RATE_LIMIT_WINDOW_SECONDS=60
 ENVIRONMENT=staging
 DEBUG=False
 LOG_LEVEL=INFO
-DATABASE_URL=postgresql://user:password@insightsforge-staging.rds.amazonaws.com:5432/insightsforge_staging
+DATABASE_URL=postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require
 REDIS_URL=redis://insightsforge-staging-cache.xxxxx.ng.0001.use1.cache.amazonaws.com:6379
 SECRET_KEY=<generate-secure-key>
 CORS_ORIGINS=["https://staging.insightsforge.io"]
@@ -569,10 +564,10 @@ RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
 **Characteristics:**
-- Cloud database (RDS/Azure)
+- Managed Supabase PostgreSQL (with Supavisor connection pooling)
 - Cloud cache (ElastiCache/Redis)
 - Real payment processing (test mode)
-- Real file storage (S3)
+- Real file storage (S3 / Supabase Storage)
 - Automated deployments from main branch
 - Real SSL certificates
 - Performance monitoring enabled
@@ -585,11 +580,11 @@ RATE_LIMIT_WINDOW_SECONDS=60
 
 **Configuration:**
 ```python
-# .env.production (AWS Secrets Manager or Azure Key Vault)
+# .env.production (AWS Secrets Manager or Azure Key Vault / Supabase)
 ENVIRONMENT=production
 DEBUG=False
 LOG_LEVEL=WARNING
-DATABASE_URL=postgresql://user:password@insightsforge-prod.rds.amazonaws.com:5432/insightsforge_prod
+DATABASE_URL=postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require
 REDIS_URL=redis://insightsforge-prod-cache.xxxxx.ng.0001.use1.cache.amazonaws.com:6379
 SECRET_KEY=<highly-secure-key-from-secrets-manager>
 CORS_ORIGINS=["https://insightsforge.io", "https://www.insightsforge.io"]
@@ -624,135 +619,113 @@ NEW_RELIC_LICENSE_KEY=<apm-key>
 
 ---
 
-## 🌳 Git Branching Strategy (Git Flow)
+## 🌳 Git Branching Strategy (GitHub Flow / Trunk-Based)
 
-### **Branch Types**
+### **1. Branch Topology & Architecture**
 
 ```
-main (production)
-  └── Protected branch
-      └── Only receives merges from release-* and hotfix-* branches
-      └── Auto-deploys to production
-
-develop (development)
-  └── Integration branch
-      └── Receives feature merges
-      └── Auto-deploys to staging
-
-feature/* (feature branches)
-  └── Created from: develop
-  └── Naming: feature/user-authentication, feature/data-cleaning-engine
-  └── Merged back to: develop via Pull Request
-  └── Deleted after merge
-
-release/* (release branches)
-  └── Created from: develop
-  └── Naming: release/v1.0.0, release/v1.1.0
-  └── Merged to: main AND back to develop
-  └── Auto-deploys to production
-
-hotfix/* (hotfix branches)
-  └── Created from: main
-  └── Naming: hotfix/critical-bug, hotfix/payment-issue
-  └── Merged to: main AND develop
-  └── Auto-deploys to production immediately
+main ──────────●───────────────────●───────────────────●─────── (Deploy to Production)
+               │                  ▲                   ▲
+               │ (branch)         │ (PR / Merge)      │
+feat/auth ─────┴──────●───────●────┘                   │
+                                                       │
+feat/dataset-upload ─────────────────●──────────●──────┘
 ```
 
-### **Branch Workflow**
+#### **Primary Branch**
+* **`main`**:
+  * The single source of truth; always deployable and protected.
+  * Direct commits are prohibited; all changes land via reviewed Pull Requests.
+  * Connected to automated CI/CD pipelines and preview verification.
 
-**Starting a Feature:**
-```bash
-git checkout develop
-git pull origin develop
-git checkout -b feature/dashboard-improvements
+#### **Ephemeral Branches (Short-Lived Feature Branches)**
+* Feature branches are branched off `main` and merged back into `main` after automated checks and validation pass.
+* Lifespan: ideally **1–2 days max** per branch to avoid drift and merge conflicts.
+
+---
+
+### **2. Standard Branch Naming Conventions**
+
+All branch names follow `<type>/<scope>-<short-description>` using kebab-case:
+
+| Type | Purpose | Example |
+|---|---|---|
+| `feat/` | New UI component, page, or feature | `feat/dataset-uploader`, `feat/chat-stream` |
+| `fix/` | Bug fixes or patch releases | `fix/auth-token-refresh`, `fix/table-virtual-scroll` |
+| `refactor/` | Code structure improvements without feature change | `refactor/api-client-interceptor` |
+| `perf/` | Performance optimizations | `perf/chart-render-memoization` |
+| `docs/` | Documentation or specifications update | `docs/update-frontend-spec` |
+| `chore/` | Tooling, dependencies, or config updates | `chore/upgrade-tanstack-query` |
+
+---
+
+### **3. Phased Branching Execution Plan**
+
+Short-lived feature branches mapped to roadmap milestones:
+
+#### **Phase 1: Foundation & Authentication**
+1. `feat/setup-design-system` — Next.js project init, Tailwind CSS, `shadcn/ui` base components, layout shell.
+2. `feat/auth-session-flow` — API client wrapper, JWT interceptor, `AuthContext`, login/signup pages, middleware protection.
+
+#### **Phase 2: Dataset Workspace**
+3. `feat/dataset-ingestion` — File uploader (`react-dropzone`), upload progress, dataset listing page.
+4. `feat/dataset-quality-preview` — Data health score card, column distribution badges, virtualized table preview.
+
+#### **Phase 3: Analytics & Visualizations**
+5. `feat/analytics-dashboard` — Metric KPI cards, Recharts time-series and anomaly charts, URL-synced date filter bar.
+
+#### **Phase 4: Machine Learning & Forecasts**
+6. `feat/ml-forecast-insights` — Forecast confidence band visualizer, anomaly feed, prescriptive recommendation cards.
+
+#### **Phase 5: AI Chat Interface**
+7. `feat/chat-streaming` — SSE / streaming chat interface, message history, dataset context selector chips.
+
+#### **Phase 6: Billing & Account**
+8. `feat/billing-settings` — Stripe customer portal redirection, quota usage gauges, user settings.
+
+---
+
+### **4. Commit Message Standard (Conventional Commits)**
+
+Commit messages must follow the Conventional Commits specification:
+
+```
+<type>(<scope>): <short imperative summary>
+
+[optional body]
 ```
 
-**Committing & Pushing:**
-```bash
-git add .
-git commit -m "feat: add interactive dashboard filters"
-git push origin feature/dashboard-improvements
+* **Examples**:
+  * `feat(auth): implement jwt refresh token interceptor in api-client`
+  * `feat(datasets): add file dropzone with mime validation`
+  * `fix(chat): handle empty token stream buffer on SSE disconnect`
+  * `docs(spec): document query key tuple conventions`
+
+---
+
+### **5. Pull Request & Merge Policy**
+
+1. **Rebase & Fast-Forward / Squash & Merge**:
+   * Use **Squash and Merge** for clean, atomic history on `main`.
+2. **Pre-Merge Validation**:
+   * Type checking: `tsc --noEmit` must pass with 0 errors.
+   * Linter: ESLint / Prettier check must be clean.
+   * Build check: `next build` must compile successfully without warnings.
+   * Automated tests must pass all test suites.
+
+---
+
+### **6. Branch Protection Rules (GitHub)**
+
+**`main` Branch Protection:**
 ```
-
-**Creating Pull Request:**
-- Push to GitHub
-- Create PR against `develop` branch
-- Request code review
-- Pass CI/CD checks (tests, linting)
-- 2 approvals required
-- Merge via "Squash and merge" for clean history
-
-**Merging Feature:**
-```bash
-# After PR approval in GitHub UI
-# Use "Squash and merge" to keep history clean
-```
-
-**Creating Release:**
-```bash
-# When ready to release
-git checkout -b release/v1.0.0 develop
-# Bump version in package.json, requirements.txt, etc.
-git commit -am "chore: bump version to v1.0.0"
-git push origin release/v1.0.0
-
-# Create PR against main and develop
-# After approval:
-git checkout main
-git merge --no-ff release/v1.0.0
-git tag v1.0.0
-git push origin main --tags
-
-git checkout develop
-git merge --no-ff release/v1.0.0
-git push origin develop
-
-# Delete release branch
-git branch -d release/v1.0.0
-git push origin --delete release/v1.0.0
-```
-
-**Hotfix (Critical Bug):**
-```bash
-git checkout -b hotfix/security-issue main
-# Fix the bug
-git commit -am "fix: security vulnerability in auth"
-git push origin hotfix/security-issue
-
-# Create PR to main, get approved, merge
-git checkout main
-git merge --no-ff hotfix/security-issue
-git tag v1.0.1
-git push origin main --tags
-
-# Also merge back to develop
-git checkout develop
-git merge --no-ff hotfix/security-issue
-git push origin develop
-
-git branch -d hotfix/security-issue
-git push origin --delete hotfix/security-issue
-```
-
-### **Branching Rules (GitHub)**
-
-**Main Branch Protection:**
-```
-✓ Require pull request reviews before merging (2 approvals)
-✓ Require status checks to pass (CI/CD pipeline)
+✓ Require pull request reviews before merging (1-2 approvals)
+✓ Require status checks to pass (CI/CD pipeline: build, lint, test)
 ✓ Require branches to be up to date before merging
 ✓ Include administrators in restrictions
 ✓ Dismiss stale PR approvals when new commits pushed
-✓ Require code owner reviews
+✓ Require linear commit history (Squash and Merge)
 ✓ Auto-delete head branches after merge
-```
-
-**Develop Branch Protection:**
-```
-✓ Require pull request reviews before merging (1 approval)
-✓ Require status checks to pass
-✓ Require branches to be up to date
-✓ Auto-delete head branches
 ```
 
 ---
@@ -1010,17 +983,21 @@ email-validator==2.0.0
 ```
 
 ### **Frontend (Node.js)**
-```
+```json
 "dependencies": {
-  "next": "^14.0.0",
-  "react": "^18.0.0",
-  "react-dom": "^18.0.0",
+  "next": "16.3.4",
+  "react": "^19.0.0",
+  "react-dom": "^19.0.0",
   "typescript": "^5.0.0",
-  "tailwindcss": "^3.3.0",
-  "recharts": "^2.10.0",
-  "axios": "^1.5.0",
-  "react-hook-form": "^7.48.0",
-  "zod": "^3.22.0"
+  "tailwindcss": "4.3.3",
+  "@tanstack/react-query": "5.102.8",
+  "zustand": "5.0.5",
+  "recharts": "3.10",
+  "@tanstack/react-table": "^8.20.0",
+  "axios": "^1.7.0",
+  "react-hook-form": "^7.54.0",
+  "zod": "^3.24.0",
+  "lucide-react": "^1.0.0"
 }
 ```
 
@@ -1049,10 +1026,10 @@ email-validator==2.0.0
 |-----------|------------|---------|---------|-----------|
 | Frontend | localhost:3000 | N/A | staging.* | insightsforge.io |
 | Backend | localhost:8000 | pytest | api-staging.* | api.insightsforge.io |
-| Database | PostgreSQL local | SQLite/PG | AWS RDS | AWS RDS Multi-AZ |
-| Cache | Redis local | Redis local | AWS ElastiCache | AWS ElastiCache Cluster |
+| Database | PostgreSQL local (:5432) | SQLite / Local PG | Supabase Staging | **Supabase Production** (SSL, Port 6543) |
+| Cache | Redis local (:6379) | Redis local / Mock | Supabase / Redis Cloud | Managed Redis Cluster |
 | Deployment | Manual (none) | CI/CD test | Auto (develop) | Manual (release tag) |
-| Scaling | Single machine | N/A | Small | Medium+ |
+| Scaling | Single machine | N/A | Serverless / Cloud | High Availability Managed |
 | SSL | No | N/A | Yes | Yes |
 
 This architecture is production-ready, scalable, and maintainable!
